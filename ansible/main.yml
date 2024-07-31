@@ -1,0 +1,73 @@
+---
+# Настраиваем сервер NFS
+- hosts: server
+  gather_facts: true
+  become: true
+  tasks:
+   - name: Установим сервер NFS 
+     ansible.builtin.command: "apt install nfs-kernel-server -y"
+   - name: Создаём и настраиваем директорию, которая будет экспортирована в будущем
+     ansible.builtin.shell: | 
+       mkdir -p /srv/share/upload 
+       chown -R nobody:nogroup /srv/share
+       chmod 0777 /srv/share/upload
+   - name: Cоздаём в файле `/etc/exports` структуру, которая позволит экспортировать ранее созданную директорию
+     ansible.builtin.shell: |
+        cat << EOF > /etc/exports 
+        /srv/share 192.168.90.89/23(rw,sync,root_squash)
+        EOF
+   - name: Экспортируем ранее созданную директорию
+     ansible.builtin.shell: |
+        exportfs -r    
+## Настраиваем клиент NFS
+- hosts: client
+  gather_facts: true
+  become: true
+  tasks:
+  - name: Установим пакет с NFS-клиентом 
+    ansible.builtin.command: "apt install nfs-common -y"
+  - name: Добавляем в /etc/fstab строку
+    ansible.builtin.shell: | 
+      echo "192.168.90.60:/srv/share/ /mnt nfs vers=3,noauto,x-systemd.automount 0 0" >> /etc/fstab
+  - name: Рестартуем службу и примонтируем
+    ansible.builtin.shell: | 
+      systemctl daemon-reload
+      systemctl restart remote-fs.target
+      mount /mnt/
+  - name: проверяем успешность монтирования
+    ansible.builtin.shell: | 
+      mount | grep mnt
+    register: mount_otus
+  - name: Вывод команды
+    ansible.builtin.debug: 
+      var: mount_otus.stdout
+### Проверка работоспособности
+- hosts: server
+  gather_facts: true
+  become: true
+  tasks:
+  - name: Создаём тестовый файл на сервере
+    ansible.builtin.shell: | 
+      touch /srv/share/upload/check_file
+- hosts: client
+  gather_facts: true
+  become: true
+  tasks:
+  - name: Проверяем наличие ранее созданного файла на клиенте
+    ansible.builtin.shell: | 
+      ls /mnt/upload/ | grep check*
+    register: check_file_ll  
+  - name: Вывод команды
+    ansible.builtin.debug: 
+      var: check_file_ll.stdout  
+  - name: Создаём тестовый файл из клиента
+    ansible.builtin.shell: | 
+       touch /mnt/upload/client_file
+       ls /mnt/upload/ | grep client*
+    register: client_file_ls  
+  - name: Проверяем файл
+    ansible.builtin.debug: 
+      var: client_file_ls.stdout  
+
+
+  
